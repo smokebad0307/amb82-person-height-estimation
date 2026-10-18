@@ -1,0 +1,17 @@
+# Local Wi-Fi credentials
+config.h
+
+# Arduino build products
+build/
+*.bin
+*.elf
+*.map
+*.hex
+*.log
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
