@@ -62,8 +62,10 @@
 #define BBOX_OVERSIZE_SHRINK_ALPHA         0.35f
 #define BBOX_PRIMARY_SWITCH_RATIO          1.25f
 
-// TOF400H polling interval. Valid readings are used directly without filtering.
+// TOF400H filtering and value retention.
 #define DISTANCE_MEASUREMENT_INTERVAL_MS    250UL
+#define DISTANCE_MEDIAN_WINDOW              5
+#define DISTANCE_VALUE_HOLD_MS              3000UL
 
 // TOF400H UART/Modbus: TOF TX -> GPIO18, TOF RX -> GPIO19, external 5V, common GND.
 #define TOF400H_BAUD_RATE                    115200
@@ -82,6 +84,8 @@
 #define HEIGHT_CALIBRATION_MIN_DISTANCE_CM 180.0f
 #define HEIGHT_CALIBRATION_MAX_DISTANCE_CM 300.0f
 #define HEIGHT_UPDATE_INTERVAL_MS          1000UL
+#define HEIGHT_MEDIAN_WINDOW                  5
+#define HEIGHT_VALUE_HOLD_MS               3000UL
 
 #endif
 

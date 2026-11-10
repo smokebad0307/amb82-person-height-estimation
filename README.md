@@ -2,7 +2,7 @@
 
 This project combines an AMB82 Mini camera, a person-only YOLOv7-tiny model,
 and a TOF400H infrared ToF sensor to estimate a person's height. It provides a
-browser camera stream, on-screen bounding boxes, direct distance and height,
+browser camera stream, on-screen bounding boxes, filtered distance and height,
 and Serial Monitor diagnostics.
 
 ## Features
@@ -10,10 +10,10 @@ and Serial Monitor diagnostics.
 - Person-only YOLOv7-tiny inference on AMB82 Mini
 - One displayed primary-person bounding box
 - Lightweight multi-person association and bounding-box EMA smoothing
-- Direct TOF400H UART/Modbus distance input without a median filter
+- TOF400H UART/Modbus distance input with a five-sample median filter
 - Height estimation calibrated from 1280x720 person measurements
-- Direct height calculation limited to once per second without a height median filter
-- Height estimate reset when the person is lost, changes, or multiple people appear
+- Height calculation limited to once per second with a five-sample median filter
+- Last valid distance and height values retained for three seconds during short interruptions
 - Confidence, distance, bounding-box height, and estimated height on the web UI
 - H.264 RTSP output and an MJPEG browser stream
 - Optional HW-493 laser aiming indicator on GPIO 7
@@ -82,12 +82,12 @@ height_cm = bbox_height_at_720p *
             (0.001374586854 * distance_cm + 0.022063368530)
 ```
 
-The calibrated distance range is 180 to 300 cm. Each valid TOF400H distance is
-used directly without a median filter. Height is calculated directly once per
-second. Low-confidence boxes do not replace the last
-reliable height estimate, and the estimate resets when the tracked person is
-lost, changes, or multiple people appear. Measurements outside the calibrated
-range are extrapolations.
+The calibrated distance range is 180 to 300 cm. TOF400H distance uses a
+five-sample median filter. Height is calculated once per second and passed
+through a separate five-sample median filter. Low-confidence boxes are not
+added to the height window. When the sensor read or person track is briefly
+interrupted, the filter state resets but the last valid displayed value remains
+for three seconds. Measurements outside the calibrated range are extrapolations.
 
 The calibration spreadsheet and the measurement-accuracy analysis are included
 in this repository. The current calibration used manually checked full-person
@@ -100,5 +100,5 @@ boxes and includes shoes, so live YOLO results may have additional error.
 - Browser camera stream: `http://BOARD_IP:81/stream`
 
 The JSON response includes `distanceCm`, bounding-box data, confidence,
-the direct height estimate, and height reliability status.
+the raw height sample, the median-filtered height, and height-filter status.
 
