@@ -10,9 +10,9 @@ and Serial Monitor diagnostics.
 - Person-only YOLOv7-tiny inference on AMB82 Mini
 - One displayed primary-person bounding box
 - Lightweight multi-person association and bounding-box EMA smoothing
-- TOF400H UART/Modbus distance input with a five-sample median filter
+- TOF400H UART/Modbus distance input with a 30-sample median filter
 - Height estimation calibrated from 1280x720 person measurements
-- Height calculation limited to once per second with a five-sample median filter
+- Height calculation limited to once per second with a 30-sample median filter
 - Last valid distance and height values retained for three seconds during short interruptions
 - Confidence, distance, bounding-box height, and estimated height on the web UI
 - H.264 RTSP output and an MJPEG browser stream
@@ -83,8 +83,9 @@ height_cm = bbox_height_at_720p *
 ```
 
 The calibrated distance range is 180 to 300 cm. TOF400H distance uses a
-five-sample median filter. Height is calculated once per second and passed
-through a separate five-sample median filter. Low-confidence boxes are not
+30-sample median filter. Height is calculated once per second and passed
+through a separate 30-sample median filter. For an even-sized window, the two
+middle sorted values are averaged. Low-confidence boxes are not
 added to the height window. When the sensor read or person track is briefly
 interrupted, the filter state resets but the last valid displayed value remains
 for three seconds. Measurements outside the calibrated range are extrapolations.

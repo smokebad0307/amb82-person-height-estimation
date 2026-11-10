@@ -169,10 +169,10 @@ static_assert(
     OBJECT_DETECTION_MODEL == DEFAULT_YOLOV7TINY,
     "Update the literal modelSelect model in mid.ino to match config.h"
 );
-static_assert(DISTANCE_MEDIAN_WINDOW > 0 && (DISTANCE_MEDIAN_WINDOW % 2) == 1,
-              "DISTANCE_MEDIAN_WINDOW must be a positive odd number");
-static_assert(HEIGHT_MEDIAN_WINDOW > 0 && (HEIGHT_MEDIAN_WINDOW % 2) == 1,
-              "HEIGHT_MEDIAN_WINDOW must be a positive odd number");
+static_assert(DISTANCE_MEDIAN_WINDOW > 0,
+              "DISTANCE_MEDIAN_WINDOW must be positive");
+static_assert(HEIGHT_MEDIAN_WINDOW > 0,
+              "HEIGHT_MEDIAN_WINDOW must be positive");
 static_assert(DISTANCE_VALUE_HOLD_MS > 0,
               "DISTANCE_VALUE_HOLD_MS must be positive");
 static_assert(HEIGHT_VALUE_HOLD_MS > 0,
@@ -703,7 +703,11 @@ int addDistanceMedianSample(DistanceMedianFilter &filter, int rawDistanceMm)
         sortedSamples[j + 1] = value;
     }
 
-    return sortedSamples[filter.sampleCount / 2];
+    int middle = filter.sampleCount / 2;
+    if ((filter.sampleCount % 2) == 0) {
+        return (sortedSamples[middle - 1] + sortedSamples[middle]) / 2;
+    }
+    return sortedSamples[middle];
 }
 
 void resetHeightMedianFilter(bool clearDisplayedValue)
@@ -756,7 +760,11 @@ int addHeightMedianSample(int rawHeightX10)
     }
 
     heightMedianSampleCount = heightMedianFilter.sampleCount;
-    return sortedSamples[heightMedianFilter.sampleCount / 2];
+    int middle = heightMedianFilter.sampleCount / 2;
+    if ((heightMedianFilter.sampleCount % 2) == 0) {
+        return (sortedSamples[middle - 1] + sortedSamples[middle]) / 2;
+    }
+    return sortedSamples[middle];
 }
 
 void updateHeightEstimate(
@@ -1614,7 +1622,7 @@ void sendDashboard(WiFiClient &client)
     client.print(
         ":81/stream' alt='AMB82 即時鏡頭' onerror=\"this.alt='鏡頭串流連線失敗，請重新整理頁面'\"></div>"
         "<section class='grid'>"
-        "<div class='card'><div class='label'>TOF400H 距離</div><div id='distance' class='value'>--</div><div class='label'>5 筆中值濾波；短暫錯誤保留有效值</div></div>"
+        "<div class='card'><div class='label'>TOF400H 距離</div><div id='distance' class='value'>--</div><div class='label'>30 筆中值濾波；短暫錯誤保留有效值</div></div>"
         "<div class='card'><div class='label'>Bounding box 高度</div><div id='height' class='value'>--</div><div id='heightPct' class='label'></div><div id='calibrationHeight' class='label'></div></div>"
         "<div class='card'><div class='label'>估算含鞋身高</div><div id='estimatedHeight' class='value'>--</div><div id='heightStatus' class='label'></div></div>"
         "<div class='card'><div class='label'>人物狀態</div><div id='person' class='value'>等待中</div><div id='confidence' class='label'></div></div>"
@@ -1624,7 +1632,7 @@ void sendDashboard(WiFiClient &client)
         "畫面只顯示面積最大的單一人物框。候選人物數：<span id='count'>0</span><br>"
         "框座標：<code id='bbox'>--</code><br>"
         "身高校正範圍：<code>180–300 cm</code>；距離來源只使用 TOF400H。<br>"
-        "身高每 <code>1 秒</code> 更新並使用 <code>5 筆中值濾波</code>；追蹤中斷時短暫保留最後有效值。<br>"
+        "身高每 <code>1 秒</code> 更新並使用 <code>30 筆中值濾波</code>；追蹤中斷時短暫保留最後有效值。<br>"
         "瀏覽器影片：<code>http://"
     );
     client.print(boardIp);
