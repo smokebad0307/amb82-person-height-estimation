@@ -58,11 +58,8 @@ volatile int bboxXMax = 0;
 volatile int bboxYMax = 0;
 volatile bool laserIsOn = false;
 volatile int estimatedHeightX10 = -1;
-volatile int rawEstimatedHeightX10 = -1;
-volatile int heightMedianSampleCount = 0;
 
-// Fixed-size filters keep sensor and height processing deterministic and avoid
-// heap allocation on the embedded target.
+// Fixed-size distance filtering avoids heap allocation on the embedded target.
 struct DistanceMedianFilter {
     int samplesMm[DISTANCE_MEDIAN_WINDOW];
     int sampleCount;
@@ -71,15 +68,8 @@ struct DistanceMedianFilter {
 
 DistanceMedianFilter tofDistanceFilter = {};
 
-struct HeightMedianFilter {
-    int samplesX10[HEIGHT_MEDIAN_WINDOW];
-    int sampleCount;
-    int sampleIndex;
-};
-
-HeightMedianFilter heightMedianFilter = {};
 unsigned long lastHeightUpdateMs = 0;
-int heightFilterTrackIndex = -1;
+int heightEstimateTrackIndex = -1;
 
 enum Tof400hReadError {
     TOF400H_READ_OK = 0,
@@ -140,8 +130,7 @@ void initializeDistanceSensor();
 void updateDistanceSensor();
 void resetDistanceMedianFilter(DistanceMedianFilter &filter);
 int addDistanceMedianSample(DistanceMedianFilter &filter, int rawDistanceMm);
-void resetHeightMedianFilter();
-int addHeightMedianSample(int rawHeightX10);
+void resetHeightEstimate();
 void updateHeightEstimate(
     int trackIndex,
     int candidateCount,
@@ -169,8 +158,6 @@ static_assert(
 );
 static_assert(DISTANCE_MEDIAN_WINDOW > 0 && (DISTANCE_MEDIAN_WINDOW % 2) == 1,
               "DISTANCE_MEDIAN_WINDOW must be a positive odd number");
-static_assert(HEIGHT_MEDIAN_WINDOW > 0 && (HEIGHT_MEDIAN_WINDOW % 2) == 1,
-              "HEIGHT_MEDIAN_WINDOW must be a positive odd number");
 static_assert(HEIGHT_UPDATE_INTERVAL_MS > 0,
               "HEIGHT_UPDATE_INTERVAL_MS must be positive");
 static_assert(TOF400H_MODBUS_ADDRESS >= 1 && TOF400H_MODBUS_ADDRESS <= 247,
@@ -701,43 +688,11 @@ int addDistanceMedianSample(DistanceMedianFilter &filter, int rawDistanceMm)
     return sortedSamples[filter.sampleCount / 2];
 }
 
-void resetHeightMedianFilter()
+void resetHeightEstimate()
 {
-    heightMedianFilter.sampleCount = 0;
-    heightMedianFilter.sampleIndex = 0;
-    heightMedianSampleCount = 0;
     estimatedHeightX10 = -1;
-    rawEstimatedHeightX10 = -1;
     lastHeightUpdateMs = 0;
-    heightFilterTrackIndex = -1;
-}
-
-int addHeightMedianSample(int rawHeightX10)
-{
-    heightMedianFilter.samplesX10[heightMedianFilter.sampleIndex] = rawHeightX10;
-    heightMedianFilter.sampleIndex =
-        (heightMedianFilter.sampleIndex + 1) % HEIGHT_MEDIAN_WINDOW;
-    if (heightMedianFilter.sampleCount < HEIGHT_MEDIAN_WINDOW) {
-        heightMedianFilter.sampleCount++;
-    }
-
-    int sortedSamples[HEIGHT_MEDIAN_WINDOW];
-    for (int i = 0; i < heightMedianFilter.sampleCount; i++) {
-        sortedSamples[i] = heightMedianFilter.samplesX10[i];
-    }
-
-    for (int i = 1; i < heightMedianFilter.sampleCount; i++) {
-        int value = sortedSamples[i];
-        int j = i - 1;
-        while (j >= 0 && sortedSamples[j] > value) {
-            sortedSamples[j + 1] = sortedSamples[j];
-            j--;
-        }
-        sortedSamples[j + 1] = value;
-    }
-
-    heightMedianSampleCount = heightMedianFilter.sampleCount;
-    return sortedSamples[heightMedianFilter.sampleCount / 2];
+    heightEstimateTrackIndex = -1;
 }
 
 void updateHeightEstimate(
@@ -750,23 +705,23 @@ void updateHeightEstimate(
 {
     if (trackIndex < 0 || candidateCount != 1 || distanceMmValue <= 0 ||
         calibrationHeightX10 <= 0) {
-        resetHeightMedianFilter();
+        resetHeightEstimate();
         return;
     }
 
-    if (heightFilterTrackIndex != trackIndex) {
-        resetHeightMedianFilter();
-        heightFilterTrackIndex = trackIndex;
+    if (heightEstimateTrackIndex != trackIndex) {
+        resetHeightEstimate();
+        heightEstimateTrackIndex = trackIndex;
     }
 
-    // Low-confidence boxes are allowed to keep the last stable height but are
-    // not admitted into the median window, preventing gradual upward drift.
+    // Ignore low-confidence boxes so a weak detection cannot replace the last
+    // reliable height estimate.
     if (score < BBOX_RELIABLE_SCORE) {
         return;
     }
 
     unsigned long now = millis();
-    if (heightMedianFilter.sampleCount > 0 &&
+    if (estimatedHeightX10 >= 0 &&
         (now - lastHeightUpdateMs) < HEIGHT_UPDATE_INTERVAL_MS) {
         return;
     }
@@ -780,17 +735,11 @@ void updateHeightEstimate(
     }
 
     lastHeightUpdateMs = now;
-    rawEstimatedHeightX10 = rawHeightX10;
-    estimatedHeightX10 = addHeightMedianSample(rawHeightX10);
+    estimatedHeightX10 = rawHeightX10;
 
-    Serial.print("Height update (raw / median): ");
-    Serial.print(rawHeightX10 / 10.0f, 1);
-    Serial.print(" / ");
+    Serial.print("Height update: ");
     Serial.print(estimatedHeightX10 / 10.0f, 1);
-    Serial.print(" cm | samples: ");
-    Serial.print(heightMedianFilter.sampleCount);
-    Serial.print('/');
-    Serial.println(HEIGHT_MEDIAN_WINDOW);
+    Serial.println(" cm");
 }
 
 uint16_t tof400hCrc16(const uint8_t *data, size_t length)
@@ -1310,7 +1259,7 @@ void objectDetectionCallback(std::vector<ObjectDetectionResult> results)
         );
     } else {
         // No person in this frame. createBitmap() plus update() clears old OSD.
-        resetHeightMedianFilter();
+        resetHeightEstimate();
         personDetected = false;
         personScore = 0;
         bboxHeightPx = 0;
@@ -1471,8 +1420,6 @@ void sendJsonData(WiFiClient &client)
     int xmaxSnapshot = bboxXMax;
     int ymaxSnapshot = bboxYMax;
     int estimatedHeightSnapshot = estimatedHeightX10;
-    int rawEstimatedHeightSnapshot = rawEstimatedHeightX10;
-    int heightMedianSampleSnapshot = heightMedianSampleCount;
     bool heightInRange = heightDistanceInCalibrationRange(distanceSnapshot);
     bool heightReliable = estimatedHeightSnapshot >= 0 && heightInRange &&
                           detectedSnapshot && candidateSnapshot == 1 &&
@@ -1519,16 +1466,6 @@ void sendJsonData(WiFiClient &client)
     } else {
         client.print(estimatedHeightSnapshot / 10.0f, 1);
     }
-    client.print(",\"rawEstimatedHeightCm\":");
-    if (rawEstimatedHeightSnapshot < 0) {
-        client.print("null");
-    } else {
-        client.print(rawEstimatedHeightSnapshot / 10.0f, 1);
-    }
-    client.print(",\"heightMedianSamples\":");
-    client.print(heightMedianSampleSnapshot);
-    client.print(",\"heightMedianWindow\":");
-    client.print(HEIGHT_MEDIAN_WINDOW);
     client.print(",\"heightUpdateIntervalMs\":");
     client.print(HEIGHT_UPDATE_INTERVAL_MS);
     client.print(",\"heightDistanceInRange\":");
@@ -1591,7 +1528,7 @@ void sendDashboard(WiFiClient &client)
         "畫面只顯示面積最大的單一人物框。候選人物數：<span id='count'>0</span><br>"
         "框座標：<code id='bbox'>--</code><br>"
         "身高校正範圍：<code>180–300 cm</code>；距離來源只使用 TOF400H。<br>"
-        "身高每 <code>1 秒</code> 更新一次，使用 <code>5 筆中值濾波</code>；換人、多人或人物消失時自動重置。<br>"
+        "身高每 <code>1 秒</code> 直接更新，不使用身高中值濾波；換人、多人或人物消失時自動重置。<br>"
         "瀏覽器影片：<code>http://"
     );
     client.print(boardIp);
@@ -1614,12 +1551,12 @@ void sendDashboard(WiFiClient &client)
         "const eh=document.getElementById('estimatedHeight'),hs=document.getElementById('heightStatus');"
         "eh.textContent=d.estimatedHeightCm===null?'--':d.estimatedHeightCm.toFixed(1)+' cm';"
         "eh.className='value '+(d.heightReliable?'ok':(d.estimatedHeightCm===null?'':'warn'));"
-        "if(d.personCandidates>1){hs.textContent='多人時暫停身高更新並重置濾波器';}"
+        "if(d.personCandidates>1){hs.textContent='多人時暫停身高更新';}"
         "else if(!d.personDetected){hs.textContent='等待人物框';}"
         "else if(d.distanceCm===null){hs.textContent='等待距離讀值';}"
         "else if(!d.heightDistanceInRange){hs.textContent='距離超出校正範圍，結果僅為外插';}"
-        "else if(d.confidence<55){hs.textContent='偵測信心較低，暫停加入身高樣本';}"
-        "else{hs.textContent='身高中值樣本 '+d.heightMedianSamples+'/'+d.heightMedianWindow+'；身高包含鞋子';}"
+        "else if(d.confidence<55){hs.textContent='偵測信心較低，保留上一次身高';}"
+        "else{hs.textContent='直接身高結果（無身高中值濾波）；身高包含鞋子';}"
         "const p=document.getElementById('person');p.textContent=d.personDetected?'偵測到':'未偵測到';p.className='value '+(d.personDetected?'ok':'no');"
         "document.getElementById('confidence').textContent=d.personDetected?'信心分數 '+d.confidence+'%':'';"
         "document.getElementById('count').textContent=d.personCandidates;"
