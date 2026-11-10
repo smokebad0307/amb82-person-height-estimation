@@ -1,5 +1,5 @@
 // AMB82-MINI project:
-//   1. TOF400H distance measurement with median filtering
+//   1. Direct TOF400H distance measurement
 //   2. Person-only YOLOv7-tiny detection
 //   3. Only the largest detected person is drawn on RTSP and browser video
 //   4. Camera, distance, and bounding-box height are shown on a web page
@@ -58,15 +58,6 @@ volatile int bboxXMax = 0;
 volatile int bboxYMax = 0;
 volatile bool laserIsOn = false;
 volatile int estimatedHeightX10 = -1;
-
-// Fixed-size distance filtering avoids heap allocation on the embedded target.
-struct DistanceMedianFilter {
-    int samplesMm[DISTANCE_MEDIAN_WINDOW];
-    int sampleCount;
-    int sampleIndex;
-};
-
-DistanceMedianFilter tofDistanceFilter = {};
 
 unsigned long lastHeightUpdateMs = 0;
 int heightEstimateTrackIndex = -1;
@@ -128,8 +119,6 @@ int calculateEstimatedHeightX10(int distanceMmValue, int calibrationHeightX10);
 bool heightDistanceInCalibrationRange(int distanceMmValue);
 void initializeDistanceSensor();
 void updateDistanceSensor();
-void resetDistanceMedianFilter(DistanceMedianFilter &filter);
-int addDistanceMedianSample(DistanceMedianFilter &filter, int rawDistanceMm);
 void resetHeightEstimate();
 void updateHeightEstimate(
     int trackIndex,
@@ -156,8 +145,6 @@ static_assert(
     OBJECT_DETECTION_MODEL == DEFAULT_YOLOV7TINY,
     "Update the literal modelSelect model in mid.ino to match config.h"
 );
-static_assert(DISTANCE_MEDIAN_WINDOW > 0 && (DISTANCE_MEDIAN_WINDOW % 2) == 1,
-              "DISTANCE_MEDIAN_WINDOW must be a positive odd number");
 static_assert(HEIGHT_UPDATE_INTERVAL_MS > 0,
               "HEIGHT_UPDATE_INTERVAL_MS must be positive");
 static_assert(TOF400H_MODBUS_ADDRESS >= 1 && TOF400H_MODBUS_ADDRESS <= 247,
@@ -655,39 +642,6 @@ void updateDistanceSensor()
     updateTof400h();
 }
 
-void resetDistanceMedianFilter(DistanceMedianFilter &filter)
-{
-    filter.sampleCount = 0;
-    filter.sampleIndex = 0;
-}
-
-int addDistanceMedianSample(DistanceMedianFilter &filter, int rawDistanceMm)
-{
-    filter.samplesMm[filter.sampleIndex] = rawDistanceMm;
-    filter.sampleIndex = (filter.sampleIndex + 1) % DISTANCE_MEDIAN_WINDOW;
-    if (filter.sampleCount < DISTANCE_MEDIAN_WINDOW) {
-        filter.sampleCount++;
-    }
-
-    int sortedSamples[DISTANCE_MEDIAN_WINDOW];
-    for (int i = 0; i < filter.sampleCount; i++) {
-        sortedSamples[i] = filter.samplesMm[i];
-    }
-
-    // Insertion sort is inexpensive for a five-sample fixed window.
-    for (int i = 1; i < filter.sampleCount; i++) {
-        int value = sortedSamples[i];
-        int j = i - 1;
-        while (j >= 0 && sortedSamples[j] > value) {
-            sortedSamples[j + 1] = sortedSamples[j];
-            j--;
-        }
-        sortedSamples[j + 1] = value;
-    }
-
-    return sortedSamples[filter.sampleCount / 2];
-}
-
 void resetHeightEstimate()
 {
     estimatedHeightX10 = -1;
@@ -965,7 +919,6 @@ void updateTof400h()
 
     uint16_t rawDistanceMm = 0;
     if (!tof400hReadRegister(0x0010, rawDistanceMm)) {
-        resetDistanceMedianFilter(tofDistanceFilter);
         distanceMm = -1;
         if ((now - lastErrorLogMs) >= TOF400H_ERROR_LOG_INTERVAL_MS) {
             lastErrorLogMs = now;
@@ -976,7 +929,6 @@ void updateTof400h()
 
     if (rawDistanceMm < TOF400H_MIN_DISTANCE_MM ||
         rawDistanceMm > TOF400H_MAX_DISTANCE_MM) {
-        resetDistanceMedianFilter(tofDistanceFilter);
         distanceMm = -1;
         if ((now - lastErrorLogMs) >= TOF400H_ERROR_LOG_INTERVAL_MS) {
             lastErrorLogMs = now;
@@ -991,8 +943,8 @@ void updateTof400h()
         return;
     }
 
-    distanceMm = addDistanceMedianSample(tofDistanceFilter, (int)rawDistanceMm);
-    Serial.print("TOF400H distance (median): ");
+    distanceMm = (int)rawDistanceMm;
+    Serial.print("TOF400H distance (raw): ");
     Serial.print(distanceMm / 10.0f, 1);
     Serial.println(" cm");
 }
@@ -1518,7 +1470,7 @@ void sendDashboard(WiFiClient &client)
     client.print(
         ":81/stream' alt='AMB82 即時鏡頭' onerror=\"this.alt='鏡頭串流連線失敗，請重新整理頁面'\"></div>"
         "<section class='grid'>"
-        "<div class='card'><div class='label'>TOF400H 距離</div><div id='distance' class='value'>--</div><div class='label'>5 筆中值濾波</div></div>"
+        "<div class='card'><div class='label'>TOF400H 距離</div><div id='distance' class='value'>--</div><div class='label'>原始有效讀值（無中值濾波）</div></div>"
         "<div class='card'><div class='label'>Bounding box 高度</div><div id='height' class='value'>--</div><div id='heightPct' class='label'></div><div id='calibrationHeight' class='label'></div></div>"
         "<div class='card'><div class='label'>估算含鞋身高</div><div id='estimatedHeight' class='value'>--</div><div id='heightStatus' class='label'></div></div>"
         "<div class='card'><div class='label'>人物狀態</div><div id='person' class='value'>等待中</div><div id='confidence' class='label'></div></div>"

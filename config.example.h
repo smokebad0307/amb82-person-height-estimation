@@ -62,9 +62,8 @@
 #define BBOX_OVERSIZE_SHRINK_ALPHA         0.35f
 #define BBOX_PRIMARY_SWITCH_RATIO          1.25f
 
-// TOF400H distance filtering.
+// TOF400H polling interval. Valid readings are used directly without filtering.
 #define DISTANCE_MEASUREMENT_INTERVAL_MS    250UL
-#define DISTANCE_MEDIAN_WINDOW              5
 
 // TOF400H UART/Modbus: TOF TX -> GPIO18, TOF RX -> GPIO19, external 5V, common GND.
 #define TOF400H_BAUD_RATE                    115200
